@@ -1129,28 +1129,6 @@
       .read-only-field { background-color: #f3f4f6 !important; color: #6b7280 !important; cursor: not-allowed; }
   .profile-subview { animation: fadeIn 0.3s ease; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-
-  /* Multi-Select Component */
-.multi-select-container { position: relative; width: 100%; }
-.multi-select-trigger {
-  padding: 10px; background: var(--input-bg); border: 1px solid var(--border-color);
-  border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between;
-}
-.multi-select-dropdown {
-  position: absolute; top: 100%; left: 0; width: 100%; max-height: 200px;
-  overflow-y: auto; background: var(--card-bg); border: 1px solid var(--border-color);
-  border-radius: 6px; z-index: 50; display: none; box-shadow: var(--shadow-md);
-}
-.multi-select-dropdown.open { display: block; }
-.multi-select-search {
-  padding: 8px; border-bottom: 1px solid var(--border-color);
-}
-.multi-select-search input { width: 100%; padding: 6px; }
-.multi-select-option {
-  padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;
-}
-.multi-select-option:hover { background: var(--input-bg); }
-.multi-select-option input { margin: 0; }
       
     </style>
   </head>
@@ -1262,6 +1240,10 @@
 
         <div class="nav-group">
           <div class="nav-group-title" title="Admin"><span>Admin</span></div>
+          <button id="finance-admin-tab-button" class="tab-button" onclick="showTab('finance-admin')">
+            <span class="nav-icon">💰</span>
+            <span class="nav-button-text">Finance Admin</span>
+          </button>
           <button id="schedule-tab-button" class="tab-button" onclick="showTab('schedule')">
             <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><path d="M12 12h-4v4h4v-4z"></path><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path></svg>
             <span class="nav-button-text">Schedule Editor</span>
@@ -1391,7 +1373,7 @@
     <button class="btn-secondary" id="btn-prof-contract" onclick="switchProfileSubTab('contract')">Contract & Job</button>
     <button class="btn-secondary" id="btn-prof-personal" onclick="switchProfileSubTab('personal')">Personal & PII</button>
     <button class="btn-secondary" id="btn-prof-docs" onclick="switchProfileSubTab('docs')">Documents</button>
-    <button class="btn-secondary" id="btn-prof-finance" onclick="switchProfileSubTab('finance')">Payroll & Comp</button>
+    <button class="btn-secondary" id="btn-prof-finance" onclick="switchProfileSubTab('finance')">Financials</button>
   </div>
   <hr class="section-divider" style="margin: 10px 0 20px 0;">
 
@@ -1467,11 +1449,19 @@
       <p class="text-color-secondary">Loading documents...</p>
     </div>
   </div>
-  
-<div id="prof-view-finance" class="profile-subview" style="display:none;">
-  <h3>My Upcoming Entitlements</h3>
-  <div id="my-entitlements-list" class="request-list">
-    <p class="text-color-secondary">Loading...</p>
+  <div id="prof-view-finance" class="profile-subview" style="display:none;">
+  <div class="form-container">
+    <h3 style="margin-top:0; color:var(--konecta-blue);">Compensation Structure</h3>
+    <div class="leave-balances" style="grid-template-columns: repeat(3, 1fr); gap:15px; display:grid; margin-bottom:20px;">
+        <div class="balance-item"><p>Basic Salary</p><span class="balance-days" id="fin-basic">--</span></div>
+        <div class="balance-item"><p>Variable Pay</p><span class="balance-days" id="fin-variable">--</span></div>
+        <div class="balance-item"><p>Total Gross</p><span class="balance-days" id="fin-total">--</span></div>
+    </div>
+    <hr class="section-divider">
+    <h3>Upcoming Entitlements & Payouts</h3>
+    <div id="my-entitlements-list" class="request-list">
+        <p class="text-color-secondary">Loading financial data...</p>
+    </div>
   </div>
 </div>
 
@@ -1707,34 +1697,9 @@
       <button type="button" class="btn-danger" onclick="submitOffboarding()">Process Exit</button>
     </form>
     <div id="offboard-status" class="status-message"></div>
-    <hr class="section-divider">
-<div id="admin-pii-editor">
-  <h3>🔒 Edit Employee PII (HR/Finance Only)</h3>
-  <div class="form-group">
-    <input type="text" id="pii-search-input" placeholder="Search User by Name/Email..." onkeyup="searchUserPII()">
-    <div id="pii-search-results" class="request-list"></div>
   </div>
-  
-  <div id="pii-edit-form" class="form-container" style="display:none; border: 2px solid var(--konecta-yellow);">
-    <input type="hidden" id="edit-pii-id">
-    <div class="form-row">
-      <div class="form-group"><label>Total Salary</label><input type="number" id="edit-pii-salary"></div>
-      <div class="form-group"><label>IBAN</label><input type="text" id="edit-pii-iban"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label>Basic</label><input type="number" id="edit-pii-basic"></div>
-      <div class="form-group"><label>Variable</label><input type="number" id="edit-pii-variable"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label>National ID</label><input type="text" id="edit-pii-natid"></div>
-      <div class="form-group"><label>Passport</label><input type="text" id="edit-pii-passport"></div>
-    </div>
-    <button class="btn-primary" onclick="savePIIChanges()">Save Secure Changes</button>
-  </div>
+
 </div>
-  </div>
-
-
 
         <!-- ================================== -->
         <!--     TAB 8: DASHBOARD PANEL         -->
@@ -1994,14 +1959,19 @@
         <!--  TAB 14: Recruitment PANEL -->
         <!-- ================================== -->
 
-        <div id="recruitment-panel" class="tab-panel">
+        <<div id="recruitment-panel" class="tab-panel">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-    <h2>Recruitment & Onboarding</h2>
-    <button class="btn-primary" onclick="showRequisitionModal()">+ Open New Requisition</button>
+    <h2>Recruitment & Hiring</h2>
+    <div>
+        <button class="btn-secondary" onclick="toggleJobBoard()">Manage Job Board</button>
+        <button class="btn-primary" onclick="showRequisitionModal()">+ Open Requisition</button>
+    </div>
   </div>
 
-  <div id="recruitment-stats" style="display: flex; gap: 15px; margin-bottom: 20px;">
-    </div>
+  <div id="job-board-view" style="display:none; margin-bottom: 20px; background: var(--card-bg); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+    <h3>Active Job Requisitions</h3>
+    <div id="job-list-container">Loading jobs...</div>
+  </div>
 
   <div class="form-group">
     <input type="text" id="candidate-search" placeholder="Search candidates..." onkeyup="filterCandidates()" style="max-width: 300px;">
@@ -2064,6 +2034,48 @@
   <div id="perf-history-list" class="request-list">
     <p class="text-color-secondary">Loading reviews...</p>
   </div>
+</div>
+
+
+        <!-- ================================== -->
+        <!--  TAB 16: Finance ADMIN PANEL -->
+        <!-- ================================== -->
+
+
+<div id="finance-admin-panel" class="tab-panel">
+  <h2>Financial Management</h2>
+  
+  <div class="form-container">
+    <h3>Add Single Entitlement</h3>
+    <div class="form-row">
+      <div class="form-group"><label>User Email</label><input type="email" id="fin-email" placeholder="user@konecta.com"></div>
+      <div class="form-group"><label>Type</label>
+        <select id="fin-type">
+            <option value="Overtime">Overtime</option>
+            <option value="Bonus">Bonus</option>
+            <option value="Referral">Referral</option>
+            <option value="Deduction">Deduction</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Amount</label><input type="number" id="fin-amount"></div>
+      <div class="form-group"><label>Due Date</label><input type="date" id="fin-date"></div>
+    </div>
+    <div class="form-group"><label>Description</label><input type="text" id="fin-desc" placeholder="e.g., Project Launch Bonus"></div>
+    <button class="btn-primary" onclick="submitEntitlement()">Add Record</button>
+  </div>
+
+  <hr class="section-divider">
+
+  <div class="form-container">
+    <h3>Bulk Upload (CSV)</h3>
+    <p class="text-color-secondary">Headers: Email, Type, Amount, Date, Description</p>
+    <input type="file" id="fin-csv-upload" accept=".csv">
+    <button class="btn-secondary" onclick="uploadFinanceCSV()">Upload CSV</button>
+  </div>
+  
+  <div id="finance-status" class="status-message"></div>
 </div>
         
       </main> <!-- End #app-content -->
@@ -2234,7 +2246,6 @@
 
           } else if (tabName === 'profile') {
    loadMyProfile();
-   loadMyEntitlements();
         
         // *** ADD THIS ELSE IF BLOCK ***
         } else if (tabName === 'registration-admin') {
@@ -2421,6 +2432,10 @@
                lrUserSelect.prepend(allUsersOption);
             }
             lrUserSelect.value = 'ALL_SUBORDINATES'; // Default
+          }
+          
+          if (user.role === 'financial_manager' || user.role === 'superadmin') {
+            document.getElementById('finance-admin-tab-button').style.display = 'inline-block';
           }
 
           if (user.role === 'admin' || user.role === 'superadmin') {
@@ -5401,61 +5416,77 @@ function populateHistoryReport(data) {
        * Called by superadmin clicking the "Registration Admin" tab.
        */
       function loadRegistrationAdmin() {
-        setStatus('registration-admin-status', 'processing', 'Loading pending registrations...');
-        const listDiv = document.getElementById('registration-admin-list');
-        listDiv.innerHTML = '';
+  setStatus('registration-admin-status', 'processing', 'Loading pending registrations...');
+  const listDiv = document.getElementById('registration-admin-list');
+  listDiv.innerHTML = '';
 
-        google.script.run
-          .withSuccessHandler(requests => {
-            if (requests.error) {
-              setStatus('registration-admin-status', 'error', requests.error);
-              return;
-            }
-            if (requests.length === 0) {
-              setStatus('registration-admin-status', 'success', 'No new user registrations requiring your approval.');
-              return;
-            }
-            
-            setStatus('registration-admin-status', 'success', `Loaded ${requests.length} pending requests.`);
-            const todayDateStr = new Date().toISOString().split('T')[0];
-
-            let html = '';
-            requests.forEach(req => {
-              html += `
-                <div class="request-list-item">
-                  <div class="item-details">
-                    <h4>${req.userName}</h4>
-                    <p><strong>Email:</strong> ${req.userEmail}</p>
-                    <p><strong>Action Required:</strong> Approve as <span style="color:var(--konecta-blue); font-weight:bold;">${req.approverRole} Manager</span></p>
-                    <p class="text-color-secondary">Other Manager Status: ${req.otherStatus}</p>
-                    <p class="text-color-secondary">Submitted: ${formatDate(req.timestamp)}</p>
-                    
-                    <div class="form-group" style="margin: 15px 0 0 0;">
-                      <label for="hiring-date-${req.requestID}" style="font-weight: 600;">Hiring Date (Final Approval Only):</label>
-                      <input type="date" id="hiring-date-${req.requestID}" value="${todayDateStr}" style="padding: 8px; background-color: var(--card-bg);">
-                    </div>
-                  </div>
-                  <div class="item-actions">
-                    <button class="approve-btn" onclick="approveDenyRegistration('${req.requestID}', '${req.userEmail}', '', 'Approved', 'hiring-date-${req.requestID}')">Approve</button>
-                    <button class="deny-btn" onclick="approveDenyRegistration('${req.requestID}', '${req.userEmail}', '', 'Denied', null)">Deny</button>
-                  </div>
-                </div>
-              `;
-            });
-            listDiv.innerHTML = html;
-          })
-          .withFailureHandler(err => {
-            setStatus('registration-admin-status', 'error', err.message);
-          })
-          .webGetPendingRegistrations();
+  google.script.run
+    .withSuccessHandler(requests => {
+      if (requests.error) {
+        setStatus('registration-admin-status', 'error', requests.error);
+        return;
       }
+      if (requests.length === 0) {
+        setStatus('registration-admin-status', 'success', 'No pending registrations requiring your action.');
+        return;
+      }
+      
+      setStatus('registration-admin-status', 'success', `Loaded ${requests.length} pending requests.`);
+      
+      let html = '';
+      requests.forEach(req => {
+        // Logic to show Date Input (Step 1) OR Read-only Date (Step 2)
+        let dateInputHtml = '';
+        const isStep1 = req.approverRole === 'Direct';
+        const isStep2 = req.approverRole === 'Functional';
+        const inputId = `hiring-date-${req.requestID}`;
+        const defaultDate = req.hiringDate || new Date().toISOString().split('T')[0];
+
+        if (isStep1) {
+           // Direct Manager: Must Input Date
+           dateInputHtml = `
+             <div class="form-group" style="margin: 15px 0 0 0; background: #fff; padding: 10px; border: 1px solid var(--konecta-blue); border-radius: 4px;">
+               <label for="${inputId}" style="font-weight: 600; color: var(--konecta-blue);">Step 1: Set Hiring Date (Required)</label>
+               <input type="date" id="${inputId}" value="${defaultDate}" style="width: 100%;">
+             </div>`;
+        } else if (isStep2) {
+           // Project Manager: Review Date
+           dateInputHtml = `
+             <div class="form-group" style="margin: 15px 0 0 0; background: #f0fdf4; padding: 10px; border: 1px solid var(--status-success-text); border-radius: 4px;">
+               <label style="font-weight: 600; color: var(--status-success-text);">Step 2: Review Hiring Date</label>
+               <input type="date" id="${inputId}" value="${defaultDate}" readonly style="width: 100%; background: #e6fffa; cursor: not-allowed;">
+               <small>Set by Direct Manager. Approve to finalize account.</small>
+             </div>`;
+        }
+
+        html += `
+          <div class="request-list-item">
+            <div class="item-details">
+              <h4>${req.userName}</h4>
+              <p><strong>Email:</strong> ${req.userEmail}</p>
+              <p><strong>Action Required:</strong> <span style="color:var(--konecta-blue); font-weight:bold;">${req.otherStatus}</span></p>
+              <p class="text-color-secondary">Submitted: ${req.timestamp}</p>
+              ${dateInputHtml}
+            </div>
+            <div class="item-actions">
+              <button class="approve-btn" onclick="approveDenyRegistration('${req.requestID}', '${req.userEmail}', '', 'Approved', '${inputId}')">Approve</button>
+              <button class="deny-btn" onclick="approveDenyRegistration('${req.requestID}', '${req.userEmail}', '', 'Denied', null)">Deny</button>
+            </div>
+          </div>
+        `;
+      });
+      listDiv.innerHTML = html;
+    })
+    .withFailureHandler(err => {
+      setStatus('registration-admin-status', 'error', err.message);
+    })
+    .webGetPendingRegistrations();
+}
 
       // REPLACE this function in your <script> tag
-function approveDenyRegistration(requestID, userEmail, supervisorEmail, newStatus, dateInputId) { // <-- Added dateInputId
-  
-  // This is the backend call. It's the same.
+function approveDenyRegistration(requestID, userEmail, supervisorEmail, newStatus, dateInputId) {
   const runAction = (hiringDateStr) => {
-    setStatus('registration-admin-status', 'processing', `Processing ${newStatus} for ${userEmail}...`);
+    setStatus('registration-admin-status', 'processing', `Processing ${newStatus}...`);
 
     google.script.run
       .withSuccessHandler(result => {
@@ -5463,46 +5494,39 @@ function approveDenyRegistration(requestID, userEmail, supervisorEmail, newStatu
           setStatus('registration-admin-status', 'error', result.error);
         } else {
           setStatus('registration-admin-status', 'success', result.message);
-          loadRegistrationAdmin(); // Refresh the list
+          loadRegistrationAdmin(); // Refresh list
         }
       })
       .withFailureHandler(err => {
         setStatus('registration-admin-status', 'error', err.message);
       })
-      // *** MODIFIED: Pass hiringDateStr ***
       .webApproveDenyRegistration(requestID, userEmail, supervisorEmail, newStatus, hiringDateStr);
   };
 
   if (newStatus === 'Approved') {
-    // *** MODIFIED: Read from calendar, remove prompt ***
-    const hiringDateStr = document.getElementById(dateInputId).value;
-    
-    if (!hiringDateStr) {
-      setStatus('registration-admin-status', 'error', 'Please select a Hiring Date from the calendar.');
-      return; // User clicked approve without a date
+    // Logic: Read date if the input exists
+    let hiringDateStr = null;
+    if (dateInputId) {
+       hiringDateStr = document.getElementById(dateInputId).value;
+       if (!hiringDateStr) {
+         setStatus('registration-admin-status', 'error', 'Hiring Date is missing.');
+         return;
+       }
     }
     
-    // Simple validation (can be removed if not needed, as <input type="date"> is robust)
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(hiringDateStr) || isNaN(new Date(hiringDateStr).getTime())) {
-      setStatus('registration-admin-status', 'error', 'Invalid date format. Please use YYYY-MM-DD.');
-      return;
-    }
-    
-    // Show confirmation
     showCustomConfirm(
-      `Are you sure you want to APPROVE ${userEmail} with hiring date ${hiringDateStr}?`,
-      'Approve User',
+      `Are you sure you want to APPROVE ${userEmail}?`,
+      'Approve',
       'approve-btn',
-      () => runAction(hiringDateStr) // Pass date to action
+      () => runAction(hiringDateStr)
     );
     
   } else {
-    // Denying, no date needed, logic is unchanged
     showCustomConfirm(
-      `Are you sure you want to DENY ${userEmail}? They will be prompted to re-select a supervisor.`,
-      'Deny User',
+      `Are you sure you want to DENY ${userEmail}?`,
+      'Deny',
       'deny-btn',
-      () => runAction(null) // Pass null for date
+      () => runAction(null)
     );
   }
 }
@@ -6450,120 +6474,255 @@ function submitOffboarding() {
     .webOffboardEmployee({ email: email, exitDate: date, reason: reason });
 }
 
-// --- Multi-Select Component Logic ---
-function initMultiSelect(containerId, users, onSelectionChange) {
-  const container = document.getElementById(containerId);
-  container.innerHTML = `
-    <div class="multi-select-container">
-      <div class="multi-select-trigger" onclick="this.nextElementSibling.classList.toggle('open')">
-        <span id="${containerId}-label">Select Users...</span>
-        <span>▼</span>
-      </div>
-      <div class="multi-select-dropdown">
-        <div class="multi-select-search">
-          <input type="text" placeholder="Search..." onkeyup="filterMultiSelect(this)">
-        </div>
-        <div class="multi-select-options">
-          ${users.map(u => `
-            <div class="multi-select-option" onclick="toggleMultiOption(this, '${containerId}')">
-              <input type="checkbox" value="${u.email}" data-name="${u.name}">
-              <span>${u.name}</span>
+// --- JOB BOARD LOGIC ---
+function toggleJobBoard() {
+    const div = document.getElementById('job-board-view');
+    if (div.style.display === 'none') {
+        div.style.display = 'block';
+        loadJobBoard();
+    } else {
+        div.style.display = 'none';
+    }
+}
+
+function loadJobBoard() {
+    google.script.run.withSuccessHandler(jobs => {
+        const container = document.getElementById('job-list-container');
+        if (jobs.length === 0) { container.innerHTML = 'No active requisitions.'; return; }
+        
+        let html = '<table class="report-table"><thead><tr><th>Title</th><th>Manager</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+        jobs.forEach(j => {
+            html += `<tr>
+                <td>${j.title} <br><small class="text-color-secondary">${j.dept}</small></td>
+                <td>${j.manager}</td>
+                <td>${j.date}</td>
+                <td><span class="status-badge ${j.status === 'Open' ? 'status-approved' : 'status-denied'}">${j.status}</span></td>
+                <td>
+                    <button class="deny-btn" style="padding: 4px 8px; font-size: 0.8rem;" onclick="archiveJob('${j.id}')">Archive</button>
+                </td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }).webGetRequisitions('Open');
+}
+
+function archiveJob(id) {
+    if(!confirm("Archive this job post?")) return;
+    google.script.run.withSuccessHandler(() => loadJobBoard()).webManageRequisition(id, 'Archive', {});
+}
+
+// --- CANDIDATE ACTIONS ---
+
+function loadRecruitmentAdmin() { // Replaces existing loadRecruitmentAdmin
+  const list = document.getElementById('candidate-list');
+  list.innerHTML = '<p class="text-color-secondary">Loading pipeline...</p>';
+  
+  google.script.run.withSuccessHandler(candidates => {
+      if (candidates.length === 0) { list.innerHTML = '<p class="text-color-secondary">No candidates found.</p>'; return; }
+      
+      let html = '';
+      candidates.forEach(c => {
+        let badgeClass = c.status === 'Hired' ? 'status-approved' : c.status === 'Rejected' ? 'status-denied' : 'status-pending';
+        
+        // History Check (Simulated for UI - call backend for details)
+        let historyBtn = `<button class="view-btn" onclick="checkHistory('${c.email}')" style="font-size:0.75rem; margin-left:5px;">📜 History</button>`;
+
+        let actions = '';
+        if (c.status !== 'Hired' && c.status !== 'Rejected') {
+          actions = `
+            <div style="display:flex; gap:5px; margin-top:10px; flex-wrap:wrap;">
+              <button class="view-btn" onclick="updateCandidateStatus('${c.id}', 'Active', 'Interview 1')">Interview</button>
+              <button class="view-btn" style="background:var(--konecta-yellow); color:#000;" onclick="sendOffer('${c.id}')">Send Offer</button>
+              <button class="submit-btn-green" onclick="openHireModal('${c.id}', '${c.name}', '${c.email}', '${c.phone}', '${c.nationalId}')">HIRE</button>
+              <button class="deny-btn" onclick="openRejectModal('${c.id}')">Reject</button>
             </div>
-          `).join('')}
-        </div>
-      </div>
-    </div>
-  `;
-  // Store callback
-  container.dataset.callback = onSelectionChange;
+          `;
+        } else {
+            actions = `<p style="margin-top:5px; font-size:0.9rem;">Process Complete.</p>`;
+        }
+
+        html += `
+          <div class="request-list-item candidate-item">
+            <div class="item-details">
+              <h4>${c.name} <span class="text-color-secondary">(${c.position})</span> ${historyBtn}</h4>
+              <p><strong>Email:</strong> ${c.email}</p>
+              <p><strong>Stage:</strong> ${c.stage} | <strong>Status:</strong> <span class="status-badge ${badgeClass}">${c.status}</span></p>
+              <p><a href="${c.cv}" target="_blank" style="color:var(--konecta-blue);">View CV</a></p>
+            </div>
+            <div class="item-actions" style="width:100%; max-width:400px; text-align:right;">
+              ${actions}
+            </div>
+          </div>
+        `;
+      });
+      list.innerHTML = html;
+  }).webGetCandidates();
 }
 
-function filterMultiSelect(input) {
-  const filter = input.value.toLowerCase();
-  const options = input.closest('.multi-select-dropdown').querySelectorAll('.multi-select-option');
-  options.forEach(opt => {
-    const text = opt.innerText.toLowerCase();
-    opt.style.display = text.includes(filter) ? 'flex' : 'none';
-  });
+// --- ACTION HANDLERS ---
+
+function checkHistory(email) {
+    google.script.run.withSuccessHandler(hist => {
+        let msg = hist.length > 0 ? hist.map(h => `${h.date}: ${h.position} (${h.status})`).join('\n') : "No previous applications found.";
+        alert("Candidate History:\n" + msg);
+    }).webGetCandidateHistory(email);
 }
 
-function toggleMultiOption(div, containerId) {
-  const cb = div.querySelector('input');
-  cb.checked = !cb.checked;
-  updateMultiLabel(containerId);
+function openRejectModal(id) {
+    document.getElementById('reject-candidate-id').value = id;
+    document.getElementById('reject-modal-backdrop').style.display = 'block';
+    document.getElementById('reject-modal').style.display = 'flex';
 }
 
-function updateMultiLabel(containerId) {
-  const container = document.getElementById(containerId);
-  const cbs = container.querySelectorAll('input[type="checkbox"]:checked');
-  const label = container.querySelector('.multi-select-trigger span');
-  
-  if (cbs.length === 0) label.innerText = "Select Users...";
-  else if (cbs.length < 3) label.innerText = Array.from(cbs).map(c => c.dataset.name).join(', ');
-  else label.innerText = `${cbs.length} users selected`;
+function closeRejectModal() {
+    document.getElementById('reject-modal-backdrop').style.display = 'none';
+    document.getElementById('reject-modal').style.display = 'none';
 }
 
-// --- Admin PII Logic ---
-function searchUserPII() {
-  const q = document.getElementById('pii-search-input').value;
-  if (q.length < 3) return;
-  
-  google.script.run.withSuccessHandler(users => {
-    const div = document.getElementById('pii-search-results');
-    div.innerHTML = users.map(u => `
-      <div class="request-list-item" style="cursor:pointer" onclick="loadAdminPII('${u.email}')">
-        <strong>${u.name}</strong> (${u.email})
-      </div>
-    `).join('');
-  }).webAdminSearchUser(q);
-}
-
-function loadAdminPII(email) {
-  google.script.run.withSuccessHandler(data => {
-    document.getElementById('edit-pii-id').value = data.empID;
-    document.getElementById('edit-pii-salary').value = data.salary;
-    document.getElementById('edit-pii-iban').value = data.iban;
-    document.getElementById('edit-pii-basic').value = data.basic;
-    document.getElementById('edit-pii-variable').value = data.variable;
-    document.getElementById('edit-pii-natid').value = data.nationalId;
-    document.getElementById('edit-pii-passport').value = data.passport;
+function submitRejection() {
+    const id = document.getElementById('reject-candidate-id').value;
+    const reason = document.getElementById('reject-reason').value;
+    const sendEmail = document.getElementById('reject-send-email').checked;
     
-    document.getElementById('pii-edit-form').style.display = 'block';
-    document.getElementById('pii-search-results').innerHTML = '';
-  }).webAdminGetFullPII(email);
+    setStatus('recruitment-status', 'processing', 'Processing rejection...');
+    closeRejectModal();
+    
+    google.script.run.withSuccessHandler(msg => {
+        setStatus('recruitment-status', 'success', msg);
+        loadRecruitmentAdmin();
+    }).webSendRejectionEmail(id, reason, sendEmail);
 }
 
-function savePIIChanges() {
+function sendOffer(id) {
+    // For simplicity, prompt for details. In production, use a modal.
+    const startDate = prompt("Enter Offer Start Date (YYYY-MM-DD):", new Date().toISOString().split('T')[0]);
+    if(!startDate) return;
+    const basic = prompt("Enter Basic Salary:");
+    const variable = prompt("Enter Variable/Bonus:");
+    
+    if(confirm(`Send offer email to candidate?\nStart: ${startDate}\nBasic: ${basic}\nVar: ${variable}`)) {
+        setStatus('recruitment-status', 'processing', 'Sending offer...');
+        google.script.run.withSuccessHandler(msg => {
+            alert(msg);
+            loadRecruitmentAdmin();
+        }).webSendOfferLetter(id, {startDate, basic, variable});
+    }
+}
+
+// Update submitHire to include new Variable field
+function submitHire() {
+    const candidateId = document.getElementById('hire-candidate-id').value;
+    const hiringData = {
+        // ... (Existing fields: fullName, konectaEmail, directManager, etc.)
+        fullName: document.getElementById('hire-fullname').value,
+        konectaEmail: document.getElementById('hire-k-email').value,
+        title: document.getElementById('hire-title').value,
+        department: document.getElementById('hire-dept').value,
+        contractType: document.getElementById('hire-contract').value,
+        hiringDate: document.getElementById('hire-date').value,
+        directManager: document.getElementById('hire-direct-mgr').value,
+        salary: document.getElementById('hire-salary').value,
+        // NEW FIELDS
+        variable: document.getElementById('hire-variable').value, 
+        // ... (Include all other existing fields)
+        nationalId: document.getElementById('hire-nat-id').value,
+        address: document.getElementById('hire-address').value
+    };
+    
+    // Validation logic...
+    setStatus('hire-status', 'processing', 'Creating Employee Record...');
+    google.script.run.withSuccessHandler(msg => {
+        setStatus('hire-status', 'success', msg);
+        setTimeout(() => { closeHireModal(); loadRecruitmentAdmin(); }, 2000);
+    }).webHireCandidate(candidateId, hiringData);
+}
+
+// --- USER VIEW ---
+function loadMyFinancials() {
+  const container = document.getElementById('my-entitlements-list');
+  
+  google.script.run.withSuccessHandler(data => {
+    // 1. Update Salary Cards
+    document.getElementById('fin-basic').innerText = data.salary.basic.toLocaleString();
+    document.getElementById('fin-variable').innerText = data.salary.variable.toLocaleString();
+    document.getElementById('fin-total').innerText = data.salary.total.toLocaleString();
+
+    // 2. Update List
+    if (data.entitlements.length === 0) {
+      container.innerHTML = '<p class="text-color-secondary">No upcoming payments found.</p>';
+      return;
+    }
+    
+    let html = '';
+    data.entitlements.forEach(e => {
+      let color = e.type === 'Deduction' ? 'var(--status-error-text)' : 'var(--konecta-dark)';
+      html += `
+        <div class="request-list-item">
+          <div class="item-details">
+            <h4>${e.type}</h4>
+            <p>${e.desc}</p>
+            <small class="text-color-secondary">Due: ${formatDate(e.date)}</small>
+          </div>
+          <div class="item-actions" style="text-align:right;">
+            <strong style="color:${color}; font-size:1.2rem;">${Number(e.amount).toLocaleString()} ${e.currency}</strong>
+            <br><span class="status-badge ${e.status === 'Paid' ? 'status-approved' : 'status-pending'}">${e.status}</span>
+          </div>
+        </div>`;
+    });
+    container.innerHTML = html;
+  }).webGetMyFinancials();
+}
+
+// Hook into profile tab switcher
+// Update switchProfileSubTab to call loadMyFinancials() if tabName === 'finance'
+
+// --- ADMIN VIEW ---
+function submitEntitlement() {
   const data = {
-    empID: document.getElementById('edit-pii-id').value,
-    salary: document.getElementById('edit-pii-salary').value,
-    iban: document.getElementById('edit-pii-iban').value,
-    basic: document.getElementById('edit-pii-basic').value,
-    variable: document.getElementById('edit-pii-variable').value,
-    nationalId: document.getElementById('edit-pii-natid').value,
-    passport: document.getElementById('edit-pii-passport').value
+    email: document.getElementById('fin-email').value,
+    type: document.getElementById('fin-type').value,
+    amount: document.getElementById('fin-amount').value,
+    date: document.getElementById('fin-date').value,
+    desc: document.getElementById('fin-desc').value
   };
-  google.script.run.withSuccessHandler(alert).webAdminUpdatePII(data);
+  
+  if(!data.email || !data.amount) {
+    setStatus('finance-status', 'error', 'Email and Amount are required.');
+    return;
+  }
+
+  setStatus('finance-status', 'processing', 'Submitting...');
+  
+  google.script.run.withSuccessHandler(msg => {
+    setStatus('finance-status', 'success', msg);
+    // Clear form
+    document.getElementById('fin-amount').value = '';
+    document.getElementById('fin-desc').value = '';
+  }).withFailureHandler(err => {
+    setStatus('finance-status', 'error', err.message);
+  }).webSubmitEntitlement(data);
 }
 
-// --- Entitlements Logic ---
-function loadMyEntitlements() {
-  google.script.run.withSuccessHandler(list => {
-    const div = document.getElementById('my-entitlements-list');
-    if(list.length === 0) { div.innerHTML = "No upcoming payments."; return; }
-    div.innerHTML = list.map(e => `
-      <div class="request-list-item">
-        <div class="item-details">
-          <h4>${e.type}</h4>
-          <p>${e.description} | Date: ${e.date}</p>
-        </div>
-        <div class="item-actions">
-          <strong style="color:green;">+${e.amount}</strong>
-          <span class="status-tag status-pending">${e.status}</span>
-        </div>
-      </div>
-    `).join('');
-  }).webGetMyEntitlements();
+function uploadFinanceCSV() {
+  const fileInput = document.getElementById('fin-csv-upload');
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const data = parseCSV(text); // Uses existing helper
+    
+    setStatus('finance-status', 'processing', `Uploading ${data.length} records...`);
+    
+    google.script.run.withSuccessHandler(msg => {
+      setStatus('finance-status', 'success', msg);
+    }).withFailureHandler(err => {
+      setStatus('finance-status', 'error', err.message);
+    }).webUploadEntitlementsCSV(data);
+  };
+  reader.readAsText(file);
 }
 
 
@@ -6785,6 +6944,7 @@ function loadMyEntitlements() {
         <div class="form-group"><label>Basic Salary</label><input type="number" id="hire-salary" required></div>
         <div class="form-group"><label>Hourly Rate (Optional)</label><input type="number" id="hire-hourly"></div>
         <div class="form-group"><label>Bonus Plan</label><input type="text" id="hire-bonus"></div>
+        <div class="form-group"><label>Variable/Bonus</label><input type="number" id="hire-variable"></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>National ID</label><input type="text" id="hire-nat-id" required></div>
@@ -6808,6 +6968,31 @@ function loadMyEntitlements() {
   <div class="modal-footer">
     <button class="btn-secondary" onclick="closeHireModal()">Cancel</button>
     <button class="btn-primary submit-btn-green" onclick="submitHire()">Confirm Hire & Create Account</button>
+  </div>
+</div>
+
+<!-- Rejection Modal -->
+<div id="reject-modal-backdrop" class="modal-backdrop"></div>
+<div id="reject-modal" class="modal">
+  <div class="modal-header"><h2>Reject Candidate</h2></div>
+  <div class="modal-body">
+    <input type="hidden" id="reject-candidate-id">
+    <label>Reason for Rejection (Internal)</label>
+    <select id="reject-reason" class="form-group" style="width:100%; margin-bottom:10px;">
+        <option value="Skills Mismatch">Skills Mismatch</option>
+        <option value="Culture Fit">Culture Fit</option>
+        <option value="Salary Expectations">Salary Expectations</option>
+        <option value="Position Filled">Position Filled</option>
+        <option value="Other">Other</option>
+    </select>
+    <div class="form-group">
+        <input type="checkbox" id="reject-send-email" checked> 
+        <label for="reject-send-email" style="display:inline;">Send Automated Rejection Email</label>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn-secondary" onclick="closeRejectModal()">Cancel</button>
+    <button class="btn-danger" onclick="submitRejection()">Confirm Rejection</button>
   </div>
 </div>
 
