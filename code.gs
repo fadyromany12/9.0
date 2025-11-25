@@ -4,7 +4,6 @@ const BUFFER_SHEET_ID = "19OLhS4OzvtgPsVHKVigjvrw3YR9K-sWf0U-TWvJ1Ftw";
 const SPREADSHEET_ID = "1FotLFASWuFinDnvpyLTsyO51OpJeKWtuG31VFje3Oik"; // Only the ID
 const SICK_NOTE_FOLDER_ID = "1Wu_eoEQ3FmfrzOdAwJkqMu4sPucLRu_0";
 const SHEET_NAMES = {
-  // --- Existing Sheets ---
   adherence: "Adherence Tracker",
   employeesCore: "Employees_Core", 
   employeesPII: "Employees_PII",   
@@ -23,11 +22,11 @@ const SHEET_NAMES = {
   announcements: "Announcements",
   roleRequests: "Role Requests",
   recruitment: "Recruitment_Candidates",
-
-  // --- NEW SHEETS (PHASE 5) ---
-  requisitions: "Requisitions",       // For opening new job roles
-  performance: "Performance_Reviews", // For yearly/quarterly ratings
-  historyLogs: "Employee_History"     // For tracking role changes/promotions
+  requisitions: "Requisitions",
+  performance: "Performance_Reviews", 
+  historyLogs: "Employee_History",
+  warnings: "Warnings",
+  financialEntitlements: "Financial_Entitlements" // NEW
 };
 // --- Break Time Configuration (in seconds) ---
 const PLANNED_BREAK_SECONDS = 15 * 60; // 15 minutes
@@ -87,44 +86,6 @@ function webPunch(action, targetUserName, adminTimestamp, projectId) { // <-- Ad
   } catch (err) {
     return { message: "Error: " + err.message, newStatus: null };
   }
-}
-
-// --- RBAC CACHE ---
-let _rbacCache = null;
-
-function getPermissions() {
-  if (_rbacCache) return _rbacCache;
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sheet = getOrCreateSheet(ss, "RBAC_Permissions");
-  const data = sheet.getDataRange().getValues();
-  const map = {};
-  
-  for (let i = 1; i < data.length; i++) {
-    const role = data[i][0];
-    const perm = data[i][1];
-    if (!map[role]) map[role] = new Set();
-    map[role].add(perm);
-  }
-  _rbacCache = map;
-  return map;
-}
-
-function hasPermission(userRole, permission) {
-  if (userRole === 'superadmin') return true; // God mode
-  const perms = getPermissions();
-  if (!perms[userRole]) return false;
-  return perms[userRole].has(permission) || perms[userRole].has("ALL_ACCESS");
-}
-
-// Helper to verify admin logic inside functions
-function verifyPermission(userEmail, permissionNode) {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const userData = getUserDataFromDb(ss);
-  const role = userData.emailToRole[userEmail] || 'agent';
-  if (!hasPermission(role, permissionNode)) {
-    throw new Error(`Access Denied. Role '${role}' lacks permission: ${permissionNode}`);
-  }
-  return userData; // Return user data to save a fetch
 }
 
 // === NEW HELPER FOR PHASE 3 ===
@@ -3412,48 +3373,44 @@ function webSubmitFullRegistration(form) {
   try {
     const userEmail = Session.getActiveUser().getEmail().toLowerCase();
     const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database); // Or employeesCore in new version?
-    // Note: We use getUserDataFromDb to get the name, assuming user exists in Core from Phase 1 migration
-    // If completely new user, they exist in DB from auto-creation in getUserInfo
-    const userData = getUserDataFromDb(dbSheet); 
+    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore); 
+    const userData = getUserDataFromDb(ss); // Reuse helper
     const regSheet = getOrCreateSheet(ss, SHEET_NAMES.pendingRegistrations);
 
-    // Find user name (auto-created in getUserInfo)
     let userName = userEmail;
     const userObj = userData.userList.find(u => u.email === userEmail);
     if (userObj) userName = userObj.name;
 
-    // Validate inputs
-    if (!form.directManager || !form.functionalManager) throw new Error("Both Direct and Functional managers are required.");
+    if (!form.directManager || !form.functionalManager) throw new Error("Both managers are required.");
     if (!form.address || !form.phone) throw new Error("Address and Phone are required.");
-    if (form.directManager === form.functionalManager) throw new Error("Direct and Functional Manager cannot be the same person.");
-
-    // Check for existing pending request
+    
+    // Check for existing
     const data = regSheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
-      // Check if user has a row that is NOT fully rejected
-      if (data[i][1] === userEmail && (data[i][5] === 'Pending' || data[i][6] === 'Pending')) {
-        throw new Error("You already have a pending registration request.");
+      if (data[i][1] === userEmail && data[i][5] !== 'Rejected' && data[i][5] !== 'Approved') { 
+         // Simplistic check, usually status implies active workflow
+         throw new Error("You already have a pending registration request.");
       }
     }
 
     const requestID = `REG-${new Date().getTime()}`;
-
+    
     regSheet.appendRow([
       requestID,
       userEmail,
       userName,
-      form.directManager,     // Direct Manager Email
-      form.functionalManager, // Functional Manager Email
-      "Pending",              // Direct Status
-      "Pending",              // Functional Status
+      form.directManager,     
+      form.functionalManager, 
+      "Pending",              // DirectStatus
+      "Pending",              // FunctionalStatus (Wait for DM)
       form.address,
       form.phone,
-      new Date()
+      new Date(),
+      "",                     // HiringDate (Empty start)
+      1                       // WorkflowStage: 1 = Direct Manager
     ]);
 
-    return "Registration submitted! Both managers must approve your account.";
-
+    return "Registration submitted! Waiting for Direct Manager approval.";
   } catch (err) {
     Logger.log("webSubmitFullRegistration Error: " + err.message);
     return "Error: " + err.message;
@@ -3487,39 +3444,54 @@ function webGetPendingRegistrations() {
   try {
     const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
     const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore); 
     const userData = getUserDataFromDb(ss);
     const adminRole = userData.emailToRole[adminEmail] || 'agent';
-
     if (adminRole === 'agent') throw new Error("Permission denied.");
 
     const regSheet = getOrCreateSheet(ss, SHEET_NAMES.pendingRegistrations);
     const data = regSheet.getDataRange().getValues();
     const pending = [];
-
-    // Indexes: 0:ID, 1:Email, 2:Name, 3:DirectMgr, 4:FuncMgr, 5:DirectStatus, 6:FuncStatus, 7:Addr, 8:Phone, 9:Time
+    const headers = data[0]; // Get headers to map indexes safely
     
+    // Map Indexes
+    const idx = {
+      id: headers.indexOf("RequestID"),
+      email: headers.indexOf("UserEmail"),
+      name: headers.indexOf("UserName"),
+      dm: headers.indexOf("DirectManagerEmail"),
+      fm: headers.indexOf("FunctionalManagerEmail"),
+      dmStat: headers.indexOf("DirectStatus"),
+      fmStat: headers.indexOf("FunctionalStatus"),
+      ts: headers.indexOf("RequestTimestamp"),
+      hDate: headers.indexOf("HiringDate"),
+      stage: headers.indexOf("WorkflowStage")
+    };
+
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
-      const reqId = row[0];
-      const directMgr = (row[3] || "").toLowerCase();
-      const funcMgr = (row[4] || "").toLowerCase();
-      const directStatus = row[5];
-      const funcStatus = row[6];
+      const directMgr = (row[idx.dm] || "").toLowerCase();
+      const funcMgr = (row[idx.fm] || "").toLowerCase();
+      const stage = Number(row[idx.stage] || 0); // Default to 0 if missing
+      const hiringDate = row[idx.hDate] ? convertDateToString(new Date(row[idx.hDate])).split('T')[0] : ""; // YYYY-MM-DD
 
       let actionRequired = false;
       let myRoleInRequest = "";
 
-      // Superadmin sees all
       if (adminRole === 'superadmin') {
-        if (directStatus === 'Pending') { actionRequired = true; myRoleInRequest = "Direct"; }
-        else if (funcStatus === 'Pending') { actionRequired = true; myRoleInRequest = "Functional"; }
+        // Superadmin sees everything active
+        if (stage === 1 || stage === 2) {
+           actionRequired = true;
+           myRoleInRequest = (stage === 1) ? "Direct" : "Functional";
+        }
       } else {
-        // Normal Admin: Check if I am one of the managers AND my part is pending
-        if (directMgr === adminEmail && directStatus === 'Pending') {
+        // Sequential Logic
+        // Stage 1: Direct Manager must act
+        if (stage === 1 && directMgr === adminEmail) {
           actionRequired = true;
           myRoleInRequest = "Direct";
-        } else if (funcMgr === adminEmail && funcStatus === 'Pending') {
+        }
+        // Stage 2: Functional/Project Manager must act (only after DM approved)
+        else if (stage === 2 && funcMgr === adminEmail) {
           actionRequired = true;
           myRoleInRequest = "Functional";
         }
@@ -3527,18 +3499,19 @@ function webGetPendingRegistrations() {
 
       if (actionRequired) {
         pending.push({
-          requestID: reqId,
-          userEmail: row[1],
-          userName: row[2],
-          approverRole: myRoleInRequest, // Tell frontend which button to show
-          otherStatus: myRoleInRequest === "Direct" ? `Functional: ${funcStatus}` : `Direct: ${directStatus}`,
-          timestamp: convertDateToString(new Date(row[9]))
+          requestID: row[idx.id],
+          userEmail: row[idx.email],
+          userName: row[idx.name],
+          approverRole: myRoleInRequest, 
+          otherStatus: myRoleInRequest === "Direct" ? "Step 1 of 2" : "Step 2: Final Approval",
+          timestamp: convertDateToString(new Date(row[idx.ts])),
+          hiringDate: hiringDate, // Pass existing date if any
+          stage: stage
         });
       }
     }
 
     return pending.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-
   } catch (e) {
     return { error: e.message };
   }
@@ -3547,70 +3520,72 @@ function webGetPendingRegistrations() {
 /**
  * NEW: Approves one side of the request. If both approved -> HIRE.
  */
-function webApproveDenyRegistration(requestID, newStatus, hiringDateStr) {
+function webApproveDenyRegistration(requestID, userEmail, supervisorEmail, newStatus, hiringDateStr) {
   try {
     const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
     const ss = getSpreadsheet();
     const regSheet = getOrCreateSheet(ss, SHEET_NAMES.pendingRegistrations);
     const data = regSheet.getDataRange().getValues();
+    const headers = data[0];
     
+    // Find Indexes
+    const idx = {
+      id: headers.indexOf("RequestID"),
+      dmStat: headers.indexOf("DirectStatus"),
+      fmStat: headers.indexOf("FunctionalStatus"),
+      hDate: headers.indexOf("HiringDate"),
+      stage: headers.indexOf("WorkflowStage")
+    };
+
     let rowIndex = -1;
     for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === requestID) { rowIndex = i + 1; break; }
+      if (data[i][idx.id] === requestID) {
+        rowIndex = i + 1;
+        break;
+      }
     }
     if (rowIndex === -1) throw new Error("Request not found.");
 
-    // Get current row data
-    // 0:ID, 1:Email, 2:Name, 3:DirectMgr, 4:FuncMgr, 5:DirectStatus, 6:FuncStatus, 7:Addr, 8:Phone, 9:Time, 10:HiringDate
-    const row = regSheet.getRange(rowIndex, 1, 1, 12).getValues()[0];
-    const directMgr = (row[3] || "").toLowerCase();
-    const funcMgr = (row[4] || "").toLowerCase();
-    
-    // Determine role
-    let isDirect = (directMgr === adminEmail);
-    let isFunc = (funcMgr === adminEmail);
-    
-    // Superadmin override
-    const userData = getUserDataFromDb(ss);
-    if (userData.emailToRole[adminEmail] === 'superadmin') {
-      isDirect = true; isFunc = true; // Can act as both
+    const row = regSheet.getRange(rowIndex, 1, 1, regSheet.getLastColumn()).getValues()[0];
+    const currentStage = Number(row[idx.stage] || 1);
+
+    // --- DENY LOGIC (Applies to both steps) ---
+    if (newStatus === 'Denied') {
+      regSheet.getRange(rowIndex, idx.dmStat + 1).setValue("Denied");
+      regSheet.getRange(rowIndex, idx.fmStat + 1).setValue("Denied");
+      // Reset stage or set to -1 to indicate closed
+      regSheet.getRange(rowIndex, idx.stage + 1).setValue(-1); 
+      return { success: true, message: "Registration denied and closed." };
     }
 
-    // --- STEP 1: DIRECT MANAGER APPROVAL ---
-    if (isDirect && row[5] === 'Pending') {
-      if (newStatus === 'Approved') {
-        if (!hiringDateStr) throw new Error("Direct Manager must provide a proposed Hiring Date.");
-        regSheet.getRange(rowIndex, 6).setValue("Approved"); // DirectStatus
-        regSheet.getRange(rowIndex, 11).setValue(hiringDateStr); // ProposedHiringDate
-        // If DM is also FM, auto-approve FM
-        if (directMgr === funcMgr) {
-           regSheet.getRange(rowIndex, 7).setValue("Approved");
-           return activateUser(ss, row, hiringDateStr);
-        }
-        return { success: true, message: "Approved. Forwarded to Functional/Project Manager." };
-      } else {
-        regSheet.getRange(rowIndex, 6).setValue("Denied");
-        return { success: true, message: "Registration denied." };
-      }
-    }
-
-    // --- STEP 2: FUNCTIONAL MANAGER APPROVAL ---
-    if (isFunc && row[6] === 'Pending') {
-      // Ensure Direct Manager has approved first
-      if (row[5] !== 'Approved') throw new Error("Direct Manager must approve first.");
+    // --- APPROVAL LOGIC ---
+    
+    // STEP 1: Direct Manager Approval
+    if (currentStage === 1) {
+      if (!hiringDateStr) throw new Error("Direct Manager must provide a Hiring Date.");
       
-      if (newStatus === 'Approved') {
-        regSheet.getRange(rowIndex, 7).setValue("Approved"); // FuncStatus
-        // Use date from Direct Manager (stored in col 11) or override if passed
-        const finalDate = hiringDateStr || row[10]; 
-        return activateUser(ss, row, finalDate);
-      } else {
-        regSheet.getRange(rowIndex, 7).setValue("Denied");
-        return { success: true, message: "Registration denied by Functional Manager." };
-      }
+      // Validate Date
+      if (isNaN(new Date(hiringDateStr).getTime())) throw new Error("Invalid Hiring Date.");
+
+      regSheet.getRange(rowIndex, idx.dmStat + 1).setValue("Approved");
+      regSheet.getRange(rowIndex, idx.hDate + 1).setValue(new Date(hiringDateStr)); // Save Date
+      regSheet.getRange(rowIndex, idx.stage + 1).setValue(2); // Move to Stage 2
+      
+      return { success: true, message: "Step 1 Approved. Request forwarded to Project Manager." };
     }
 
-    throw new Error("You are not authorized to approve this stage, or it is not in a pending state for you.");
+    // STEP 2: Project Manager Approval
+    if (currentStage === 2) {
+      // Finalize
+      regSheet.getRange(rowIndex, idx.fmStat + 1).setValue("Approved");
+      regSheet.getRange(rowIndex, idx.stage + 1).setValue(3); // Completed
+      
+      // Reuse existing activation logic, ensuring we pass the hiring date from the sheet if not passed explicitly
+      const finalHiringDate = hiringDateStr || row[idx.hDate];
+      return activateUser(ss, row, finalHiringDate);
+    }
+
+    return { success: false, message: "Invalid Workflow State." };
 
   } catch (e) {
     Logger.log("webApproveDenyRegistration Error: " + e.message);
@@ -4663,64 +4638,97 @@ function webUpdateCandidateStatus(candidateId, newStatus, newStage) {
  * 4. Updates Candidate status to "Hired"
  */
 function webHireCandidate(candidateId, hiringData) {
-  const adminEmail = Session.getActiveUser().getEmail();
-  verifyPermission(adminEmail, "manage_recruitment"); // RBAC Check
-
   const ss = getSpreadsheet();
   const candSheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
   const coreSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
   const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
 
-  // 1. Find Candidate
+  // A. Find Candidate
   const candData = candSheet.getDataRange().getValues();
   let candRow = -1;
-  for (let i = 1; i < candData.length; i++) {
-    if (candData[i][0] === candidateId) { candRow = i + 1; break; }
-  }
-  if (candRow === -1) throw new Error("Candidate not found.");
+  let candidate = null;
+  
+  // Dynamically map headers
+  const candHeaders = candData[0];
+  const cIdx = {
+    id: candHeaders.indexOf("CandidateID"),
+    name: candHeaders.indexOf("Name"),
+    email: candHeaders.indexOf("Email"),
+    phone: candHeaders.indexOf("Phone"),
+    natId: candHeaders.indexOf("NationalID")
+  };
 
-  // 2. Generate Employee ID
+  for (let i = 1; i < candData.length; i++) {
+    if (candData[i][cIdx.id] === candidateId) {
+      candRow = i + 1;
+      candidate = {
+        name: candData[i][cIdx.name],
+        email: candData[i][cIdx.email],
+        phone: candData[i][cIdx.phone],
+        nationalId: candData[i][cIdx.natId]
+      };
+      break;
+    }
+  }
+  
+  if (!candidate) throw new Error("Candidate not found.");
+
+  // B. Generate Employee ID
   const lastRow = coreSheet.getLastRow();
   const newEmpId = `KOM-${1000 + lastRow}`;
 
-  // 3. Calculate Salaries
-  const basic = parseFloat(hiringData.basicSalary) || 0;
-  const variable = parseFloat(hiringData.variableSalary) || 0;
-  const totalSalary = basic + variable;
-
-  // 4. Create CORE Record
+  // C. Create CORE Record (Active Status - Skips Registration)
   coreSheet.appendRow([
-    newEmpId, hiringData.fullName, hiringData.konectaEmail, 'agent', 'Active',
-    hiringData.directManager, hiringData.projectManager, 0, 0, 0, // Balances
-    hiringData.gender, hiringData.empType, hiringData.contractType, hiringData.jobLevel, 
-    hiringData.department, "", "", "", "", "", "", "", "", "", "Active"
+    newEmpId,
+    hiringData.fullName || candidate.name,
+    hiringData.konectaEmail,
+    'agent',
+    'Active', // Auto-active
+    hiringData.directManager,
+    hiringData.functionalManager,
+    0, 0, 0, // Balances
+    hiringData.gender,
+    hiringData.empType,
+    hiringData.contractType,
+    hiringData.jobLevel,
+    hiringData.department,
+    hiringData.function,
+    hiringData.subFunction,
+    hiringData.gcm,
+    hiringData.scope,
+    hiringData.shore,
+    hiringData.dottedManager,
+    hiringData.projectManager,
+    hiringData.bonusPlan,
+    hiringData.nLevel,
+    "", 
+    "Active"
   ]);
 
-  // 5. Create PII Record (With Splits)
+  // D. Create PII Record (With Basic + Variable Split)
   piiSheet.appendRow([
-    newEmpId, hiringData.hiringDate, totalSalary, hiringData.iban, hiringData.address,
-    hiringData.phone, "", "", // Medical, Contract Link
-    hiringData.nationalId, hiringData.passport, hiringData.socialInsurance,
-    hiringData.birthDate, hiringData.personalEmail, hiringData.maritalStatus,
-    hiringData.dependents, hiringData.emergencyContact, hiringData.emergencyRelation,
-    basic, variable, hiringData.hourlyRate // NEW COLUMNS
+    newEmpId,
+    hiringData.hiringDate,
+    hiringData.salary, // Total Salary
+    hiringData.iban,
+    hiringData.address,
+    candidate.phone,
+    "", "", 
+    candidate.nationalId,
+    hiringData.passport,
+    hiringData.socialInsurance,
+    hiringData.birthDate,
+    candidate.email,
+    hiringData.maritalStatus,
+    hiringData.dependents,
+    hiringData.emergencyContact,
+    hiringData.emergencyRelation,
+    hiringData.salary, 
+    hiringData.hourlyRate,
+    hiringData.variable // New Variable Pay Column
   ]);
 
-  // 6. Drive Folders (Keep existing logic)
-  createEmployeeFolders(hiringData.fullName, newEmpId);
-
-  // 7. Update Candidate
-  candSheet.getRange(candRow, 7).setValue("Hired");
-  candSheet.getRange(candRow, 8).setValue("Onboarding");
-
-  // 8. Send Offer Email (Mock)
-  // MailApp.sendEmail(hiringData.personalEmail, "Offer Letter", "Welcome to Konecta...");
-
-  return `Successfully hired ${hiringData.fullName}. ID: ${newEmpId}`;
-}
-
-// Helper for folder creation to keep code clean
-function createEmployeeFolders(name, id) {
+  // E. Create Drive Folders
   try {
     const rootFolders = DriveApp.getFoldersByName("KOMPASS_HR_Files");
     if (rootFolders.hasNext()) {
@@ -4728,13 +4736,19 @@ function createEmployeeFolders(name, id) {
       const empFolders = root.getFoldersByName("Employee_Files");
       if (empFolders.hasNext()) {
         const parent = empFolders.next();
-        const folder = parent.createFolder(`${name}_${id}`);
-        folder.createFolder("Payslips");
-        folder.createFolder("Onboarding_Docs");
-        folder.createFolder("Sick_Notes");
+        const personalFolder = parent.createFolder(`${candidate.name}_${newEmpId}`);
+        personalFolder.createFolder("Payslips");
+        personalFolder.createFolder("Onboarding_Docs");
+        personalFolder.createFolder("Sick_Notes");
       }
     }
-  } catch(e) { Logger.log("Folder error: " + e.message); }
+  } catch (e) { Logger.log("Folder creation error: " + e.message); }
+
+  // F. Update Candidate Status
+  candSheet.getRange(candRow, 7).setValue("Hired"); // Status
+  candSheet.getRange(candRow, 8).setValue("Onboarding"); // Stage
+
+  return `Successfully hired ${candidate.name}. Employee ID: ${newEmpId}`;
 }
 
 /**
@@ -5242,201 +5256,445 @@ function webOffboardEmployee(offboardData) {
   return `Successfully offboarded ${targetEmail}. Status set to 'Left'.`;
 }
 
-/**
- * ======================================================================
- * MASTER SETUP: PHASE 6 AUTO-FIXER
- * PURPOSE: Creates missing sheets, adds missing columns, repairs structure.
- * RUN THIS ONCE.
- * ======================================================================
- */
-function _SETUP_PHASE_6_MASTER_FIX() {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  
-  // Helper to ensure sheet and headers exist
-  const ensureSheet = (name, headers) => {
-    let sheet = ss.getSheetByName(name);
-    if (!sheet) {
-      sheet = ss.insertSheet(name);
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-      sheet.setFrozenRows(1);
-      Logger.log(`Created sheet: ${name}`);
-    } else {
-      // Check and append missing columns
-      const currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-      const missing = headers.filter(h => !currentHeaders.includes(h));
-      if (missing.length > 0) {
-        sheet.getRange(1, sheet.getLastColumn() + 1, 1, missing.length).setValues([missing]);
-        Logger.log(`Updated ${name} with columns: ${missing.join(', ')}`);
+// --- JOB REQUISITION MANAGEMENT ---
+
+function webGetRequisitions(filterStatus) {
+  try {
+    const ss = getSpreadsheet();
+    const sheet = getOrCreateSheet(ss, SHEET_NAMES.requisitions);
+    const data = sheet.getDataRange().getValues();
+    const jobs = [];
+    
+    // Skip header
+    for (let i = 1; i < data.length; i++) {
+      const status = data[i][5];
+      if (filterStatus === 'All' || status === filterStatus) {
+        jobs.push({
+          id: data[i][0],
+          title: data[i][1],
+          dept: data[i][2],
+          manager: data[i][3],
+          date: convertDateToString(new Date(data[i][4])),
+          status: status,
+          desc: data[i][7]
+        });
       }
     }
-  };
-
-  // 1. EMPLOYEES PII (Added Salary Splits)
-  ensureSheet(SHEET_NAMES.employeesPII, [
-    "EmployeeID", "HiringDate", "Salary", "IBAN", "Address", "Phone", "MedicalInfo", 
-    "ContractType", "NationalID", "PassportNumber", "SocialInsuranceNumber", 
-    "BirthDate", "PersonalEmail", "MaritalStatus", "DependentsInfo", 
-    "EmergencyContact", "EmergencyRelation", "BasicSalary", "VariableSalary", "HourlyRate"
-  ]);
-
-  // 2. PENDING REGISTRATIONS (Added Hiring Date tracking)
-  ensureSheet(SHEET_NAMES.pendingRegistrations, [
-    "RequestID", "UserEmail", "UserName", "DirectManagerEmail", "FunctionalManagerEmail", 
-    "DirectStatus", "FunctionalStatus", "Address", "Phone", "RequestTimestamp", 
-    "ProposedHiringDate", "FinalApprovalBy"
-  ]);
-
-  // 3. REQUISITIONS (Recruitment)
-  ensureSheet(SHEET_NAMES.requisitions, [
-    "ReqID", "Title", "Department", "HiringManager", "OpenDate", 
-    "Status", "PoolCandidates", "JobDescription", "SalaryRange", "Priority"
-  ]);
-
-  // 4. ENTITLEMENTS (Payroll Hub)
-  ensureSheet("Entitlements", [
-    "EntitlementID", "EmployeeID", "Type", "Amount", "Date", "Status", "Description", "CreatedBy"
-  ]);
-
-  // 5. OVERTIME REQUESTS
-  ensureSheet("OvertimeRequests", [
-    "RequestID", "EmployeeID", "Date", "HoursRequested", "Reason", 
-    "Status", "ManagerApprover", "ProjectApprover", "ActionDate"
-  ]);
-
-  // 6. RBAC PERMISSIONS
-  ensureSheet("RBAC_Permissions", ["Role", "Permission"]);
-  
-  // Populate Default RBAC if empty
-  const rbacSheet = ss.getSheetByName("RBAC_Permissions");
-  if (rbacSheet.getLastRow() === 1) {
-    const defaults = [
-      ["superadmin", "ALL_ACCESS"],
-      ["admin", "view_dashboard"], ["admin", "edit_schedule"], ["admin", "approve_leave"], ["admin", "view_coaching"],
-      ["financial_manager", "manage_finance"], ["financial_manager", "view_employee_list"],
-      ["agent", "view_own_profile"], ["agent", "punch_clock"]
-    ];
-    rbacSheet.getRange(2, 1, defaults.length, 2).setValues(defaults);
-  }
-
-  Logger.log("Phase 6 Master Setup Complete.");
+    return jobs.reverse();
+  } catch (e) { return { error: e.message }; }
 }
 
-/**
- * FIN: Add Entitlement (Bonus/Overtime Payout)
- */
-function webAddEntitlement(data) {
-  const adminEmail = Session.getActiveUser().getEmail();
-  verifyPermission(adminEmail, "manage_finance"); // RBAC
+function webManageRequisition(reqId, action, newData) {
+  try {
+    const ss = getSpreadsheet();
+    const sheet = getOrCreateSheet(ss, SHEET_NAMES.requisitions);
+    const data = sheet.getDataRange().getValues();
+    let rowIdx = -1;
 
-  const ss = getSpreadsheet();
-  const sheet = getOrCreateSheet(ss, "Entitlements");
-  const id = `ENT-${new Date().getTime()}`;
-  
-  sheet.appendRow([
-    id, data.employeeId, data.type, data.amount, 
-    data.date, "Pending Payment", data.description, adminEmail
-  ]);
-  
-  return "Entitlement recorded.";
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === reqId) { rowIdx = i + 1; break; }
+    }
+    if (rowIdx === -1) throw new Error("Requisition not found");
+
+    if (action === 'Archive') {
+      sheet.getRange(rowIdx, 6).setValue('Archived');
+    } else if (action === 'Edit') {
+      if(newData.title) sheet.getRange(rowIdx, 2).setValue(newData.title);
+      if(newData.dept) sheet.getRange(rowIdx, 3).setValue(newData.dept);
+      if(newData.desc) sheet.getRange(rowIdx, 8).setValue(newData.desc);
+    }
+    return "Success";
+  } catch (e) { return "Error: " + e.message; }
 }
 
+// --- CANDIDATE WORKFLOW & AUTOMATION ---
+
+function webGetCandidateHistory(email) {
+  try {
+    const ss = getSpreadsheet();
+    const sheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
+    const data = sheet.getDataRange().getValues();
+    const history = [];
+    
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][2]).toLowerCase() === email.toLowerCase()) {
+        history.push({
+          position: data[i][4],
+          date: convertDateToString(new Date(data[i][9])), // AppliedDate
+          status: data[i][6],
+          stage: data[i][7]
+        });
+      }
+    }
+    return history;
+  } catch (e) { return []; }
+}
+
+function webSendRejectionEmail(candidateId, reason, sendEmail) {
+  try {
+    const ss = getSpreadsheet();
+    const sheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
+    const data = sheet.getDataRange().getValues();
+    let rowIdx = -1;
+    let candidate = {};
+
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === candidateId) { 
+        rowIdx = i + 1; 
+        candidate = { name: data[i][1], email: data[i][2], pos: data[i][4] };
+        break; 
+      }
+    }
+    if (rowIdx === -1) throw new Error("Candidate not found");
+
+    // Update Sheet
+    // Col 7 = Status, Col 8 = Stage, Col 20 = RejectionReason (New)
+    sheet.getRange(rowIdx, 7).setValue("Rejected");
+    sheet.getRange(rowIdx, 8).setValue("Disqualified");
+    // Assuming RejectionReason is column 20 (Index 19) based on fixer schema
+    // Dynamically find index just in case
+    const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+    const reasonIdx = headers.indexOf("RejectionReason");
+    if (reasonIdx > -1) sheet.getRange(rowIdx, reasonIdx + 1).setValue(reason);
+
+    if (sendEmail) {
+      const subject = `Update regarding your application for ${candidate.pos}`;
+      const body = `Dear ${candidate.name},\n\nThank you for your interest in the ${candidate.pos} position at Konecta. After careful consideration, we have decided to move forward with other candidates whose qualifications more closely match our current needs.\n\nWe wish you the best in your job search.\n\nBest regards,\nKonecta HR Team`;
+      
+      MailApp.sendEmail({ to: candidate.email, subject: subject, body: body });
+      return "Rejection recorded & Email sent.";
+    }
+    return "Rejection recorded (No email sent).";
+  } catch (e) { return "Error: " + e.message; }
+}
+
+function webSendOfferLetter(candidateId, offerDetails) {
+  try {
+    const ss = getSpreadsheet();
+    const sheet = getOrCreateSheet(ss, SHEET_NAMES.recruitment);
+    const data = sheet.getDataRange().getValues();
+    let candidate = null;
+    
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === candidateId) {
+        candidate = { name: data[i][1], email: data[i][2], pos: data[i][4] };
+        break;
+      }
+    }
+    if (!candidate) throw new Error("Candidate not found");
+
+    const subject = `Job Offer: ${candidate.pos} at Konecta`;
+    const body = `Dear ${candidate.name},\n\nWe are pleased to offer you the position of ${candidate.pos} at Konecta!\n\n` +
+                 `**Start Date:** ${offerDetails.startDate}\n` +
+                 `**Basic Salary:** ${offerDetails.basic}\n` +
+                 `**Variable/Bonus:** ${offerDetails.variable}\n\n` +
+                 `Please reply to this email to accept this offer.\n\nBest regards,\nKonecta HR`;
+
+    MailApp.sendEmail({ to: candidate.email, subject: subject, body: body });
+    return "Offer letter sent to " + candidate.email;
+  } catch (e) { return "Error: " + e.message; }
+}
+
+
+// ==========================================
+// === PHASE 6.3: PAYROLL & FINANCE HUB ===
+// ==========================================
+
 /**
- * FIN: Get Entitlements for User (Self-Service)
+ * USER: Get My Financial Profile & Entitlements
  */
-function webGetMyEntitlements() {
+function webGetMyFinancials() {
   const userEmail = Session.getActiveUser().getEmail().toLowerCase();
   const ss = getSpreadsheet();
   const userData = getUserDataFromDb(ss);
-  const user = userData.userList.find(u => u.email === userEmail);
   
-  if (!user) return [];
+  const userCore = userData.userList.find(u => u.email === userEmail);
+  if (!userCore) throw new Error("User not found.");
+
+  // 1. Get Salary Breakdown from PII
+  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
+  const piiData = piiSheet.getDataRange().getValues();
+  const piiHeaders = piiData[0];
   
-  const sheet = getOrCreateSheet(ss, "Entitlements");
-  const data = sheet.getDataRange().getValues();
-  const results = [];
-  
-  for (let i=1; i<data.length; i++) {
-    if (data[i][1] === user.empID) {
-      results.push({
-        type: data[i][2], amount: data[i][3], 
-        date: convertDateToString(new Date(data[i][4])), 
-        status: data[i][5], description: data[i][6]
+  // Map Indexes
+  const idx = {
+    empId: piiHeaders.indexOf("EmployeeID"),
+    basic: piiHeaders.indexOf("BasicSalary"),
+    variable: piiHeaders.indexOf("VariablePay"),
+    hourly: piiHeaders.indexOf("HourlyRate"),
+    total: piiHeaders.indexOf("Salary")
+  };
+
+  let salaryInfo = { basic: 0, variable: 0, total: 0 };
+
+  for (let i = 1; i < piiData.length; i++) {
+    if (piiData[i][idx.empId] === userCore.empID) {
+      salaryInfo = {
+        basic: piiData[i][idx.basic] || "Not Set",
+        variable: piiData[i][idx.variable] || "Not Set",
+        total: piiData[i][idx.total] || "Not Set"
+      };
+      break;
+    }
+  }
+
+  // 2. Get Entitlements (Bonuses, Overtime)
+  const finSheet = getOrCreateSheet(ss, SHEET_NAMES.financialEntitlements);
+  const finData = finSheet.getDataRange().getValues();
+  const entitlements = [];
+
+  for (let i = 1; i < finData.length; i++) {
+    // Col 1 = EmployeeEmail
+    if (String(finData[i][1]).toLowerCase() === userEmail) {
+      entitlements.push({
+        type: finData[i][3],
+        amount: finData[i][4],
+        currency: finData[i][5],
+        date: convertDateToString(new Date(finData[i][6])), // Due Date
+        status: finData[i][7],
+        desc: finData[i][8]
       });
     }
   }
-  return results;
+
+  return { salary: salaryInfo, entitlements: entitlements.reverse() };
 }
 
-function webAdminSearchUser(query) {
-  const adminEmail = Session.getActiveUser().getEmail();
-  verifyPermission(adminEmail, "manage_pii"); 
-  
-  const ss = getSpreadsheet();
-  const userData = getUserDataFromDb(ss);
-  const q = query.toLowerCase();
-  
-  // Search in loaded user list
-  return userData.userList.filter(u => 
-    u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.empID.toLowerCase().includes(q)
-  ).map(u => ({ name: u.name, email: u.email, empID: u.empID }));
+/**
+ * ADMIN: Submit a Single Entitlement
+ */
+function webSubmitEntitlement(data) {
+  try {
+    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
+    checkFinancialPermission(adminEmail); // Security Check
+
+    const ss = getSpreadsheet();
+    const sheet = getOrCreateSheet(ss, SHEET_NAMES.financialEntitlements);
+    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
+    const userData = getUserDataFromDb(dbSheet);
+
+    const targetEmail = data.email.toLowerCase();
+    const userObj = userData.userList.find(u => u.email === targetEmail);
+    const targetName = userObj ? userObj.name : targetEmail;
+
+    const id = `FIN-${new Date().getTime()}`;
+    
+    sheet.appendRow([
+      id,
+      targetEmail,
+      targetName,
+      data.type,
+      data.amount,
+      "EGP", // Default currency, can be dynamic
+      new Date(data.date),
+      "Pending",
+      data.desc,
+      adminEmail,
+      new Date()
+    ]);
+
+    return "Entitlement added successfully.";
+  } catch (e) { return "Error: " + e.message; }
 }
 
-function webAdminGetFullPII(targetEmail) {
-  const adminEmail = Session.getActiveUser().getEmail();
-  verifyPermission(adminEmail, "manage_pii");
-  
-  const ss = getSpreadsheet();
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const userData = getUserDataFromDb(ss);
-  const targetUser = userData.userList.find(u => u.email === targetEmail);
-  
-  if (!targetUser) throw new Error("User not found.");
-  
-  const data = piiSheet.getDataRange().getValues();
-  for (let i=1; i<data.length; i++) {
-    if (data[i][0] === targetUser.empID) {
-      return {
-        empID: data[i][0],
-        salary: data[i][2],
-        iban: data[i][3],
-        nationalId: data[i][8],
-        passport: data[i][9],
-        basic: data[i][17],
-        variable: data[i][18]
-      };
-    }
-  }
-  throw new Error("PII record missing.");
-}
+/**
+ * ADMIN: Bulk Upload Entitlements via CSV Data
+ * Expected CSV: Email, Type, Amount, Date, Description
+ */
+function webUploadEntitlementsCSV(csvData) {
+  try {
+    const adminEmail = Session.getActiveUser().getEmail().toLowerCase();
+    checkFinancialPermission(adminEmail);
 
-function webAdminUpdatePII(data) {
-  const adminEmail = Session.getActiveUser().getEmail();
-  verifyPermission(adminEmail, "manage_pii");
-  
-  const ss = getSpreadsheet();
-  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
-  const piiData = piiSheet.getDataRange().getValues();
-  
-  for (let i=1; i<piiData.length; i++) {
-    if (piiData[i][0] === data.empID) {
-      // Update fields (Index: 2=Salary, 3=IBAN, 8=NatID, 9=Passport, 17=Basic, 18=Var)
-      const r = i + 1;
-      if(data.salary) piiSheet.getRange(r, 3).setValue(data.salary);
-      if(data.iban) piiSheet.getRange(r, 4).setValue(data.iban);
-      if(data.nationalId) piiSheet.getRange(r, 9).setValue(data.nationalId);
-      if(data.passport) piiSheet.getRange(r, 10).setValue(data.passport);
-      if(data.basic) piiSheet.getRange(r, 18).setValue(data.basic);
-      if(data.variable) piiSheet.getRange(r, 19).setValue(data.variable);
+    const ss = getSpreadsheet();
+    const sheet = getOrCreateSheet(ss, SHEET_NAMES.financialEntitlements);
+    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
+    const userData = getUserDataFromDb(dbSheet); // To map emails to names
+
+    let count = 0;
+    
+    csvData.forEach(row => {
+      // row is { Email: '...', Type: '...', Amount: ... }
+      if (!row.Email || !row.Amount) return;
       
-      // Log change
-      logAction(ss, adminEmail, "Admin PII Update", `Updated PII for ${data.empID}`);
-      return "PII Updated Successfully.";
-    }
-  }
-  throw new Error("User ID not found in PII.");
+      const targetEmail = row.Email.toLowerCase();
+      const userObj = userData.userList.find(u => u.email === targetEmail);
+      const targetName = userObj ? userObj.name : targetEmail;
+      const id = `FIN-${new Date().getTime()}-${Math.floor(Math.random()*1000)}`;
+
+      sheet.appendRow([
+        id,
+        targetEmail,
+        targetName,
+        row.Type || "Bonus",
+        row.Amount,
+        "EGP",
+        new Date(row.Date || new Date()),
+        "Pending",
+        row.Description || "Bulk Upload",
+        adminEmail,
+        new Date()
+      ]);
+      count++;
+    });
+
+    return `Successfully processed ${count} records.`;
+  } catch (e) { return "Error: " + e.message; }
 }
 
-function logAction(ss, user, action, details) {
-  const sheet = getOrCreateSheet(ss, SHEET_NAMES.logs);
-  sheet.appendRow([new Date(), user, user, action, details]);
+// --- Helper: Permission Check ---
+function checkFinancialPermission(email) {
+  const ss = getSpreadsheet();
+  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore);
+  const userData = getUserDataFromDb(dbSheet);
+  const role = userData.emailToRole[email];
+  
+  if (role !== 'financial_manager' && role !== 'superadmin') {
+    throw new Error("Permission denied. Financial Manager access required.");
+  }
+}
+
+/**
+ * 📌 MASTER DB FIXER
+ * Run this ONCE to create missing sheets and add missing columns to all active sheets.
+ */
+function _MASTER_DB_FIXER() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  Logger.log("Starting Master DB Fixer...");
+
+  // Define the Target Schema for every sheet
+  const schema = {
+    [SHEET_NAMES.employeesCore]: [
+      "EmployeeID", "Name", "Email", "Role", "AccountStatus", 
+      "DirectManagerEmail", "FunctionalManagerEmail", 
+      "AnnualBalance", "SickBalance", "CasualBalance",
+      "Gender", "EmploymentType", "ContractType", "JobLevel", "Department",
+      "Function", "SubFunction", "GCMLevel", "Scope", "OffshoreOnshore",
+      "DottedManager", "ProjectManagerEmail", "BonusPlan", "N_Level", 
+      "ExitDate", "Status"
+    ],
+    [SHEET_NAMES.employeesPII]: [
+      "EmployeeID", "HiringDate", "Salary", "IBAN", "Address", 
+      "Phone", "MedicalInfo", "ContractType",
+      "NationalID", "PassportNumber", "SocialInsuranceNumber", "BirthDate",
+      "PersonalEmail", "MaritalStatus", "DependentsInfo", "EmergencyContact",
+      "EmergencyRelation", "BasicSalary", "VariableSalary", "HourlyRate", "VariablePay"
+    ],
+    [SHEET_NAMES.financialEntitlements]: [ // NEW SHEET
+      "EntitlementID", "EmployeeEmail", "EmployeeName", "Type", 
+      "Amount", "Currency", "DueDate", "Status", "Description", "AddedBy", "DateAdded"
+    ],
+    [SHEET_NAMES.pendingRegistrations]: [
+      "RequestID", "UserEmail", "UserName", 
+      "DirectManagerEmail", "FunctionalManagerEmail", 
+      "DirectStatus", "FunctionalStatus", 
+      "Address", "Phone", "RequestTimestamp",
+      "ProposedHiringDate", "FinalApprovalBy", "HiringDate", "WorkflowStage"
+    ],
+    [SHEET_NAMES.recruitment]: [
+      "CandidateID", "Name", "Email", "Phone", "Position", "CV_Link",
+      "Status", "Stage", "InterviewScores", "AppliedDate",
+      "NationalID", "LangLevel", "SecondLang", "Referrer",
+      "HR_Feedback", "Mgmt_Feedback", "Tech_Feedback", "Client_Feedback",
+      "OfferStatus", "RejectionReason", "HistoryLog"
+    ],
+    [SHEET_NAMES.requisitions]: [
+      "ReqID", "Title", "Department", "HiringManager", "OpenDate", 
+      "Status", "PoolCandidates", "JobDescription"
+    ],
+    [SHEET_NAMES.performance]: [
+      "ReviewID", "EmployeeID", "Year", "ReviewPeriod", "Rating", "ManagerComments", "Date"
+    ],
+    [SHEET_NAMES.historyLogs]: [
+      "HistoryID", "EmployeeID", "Date", "EventType", "OldValue", "NewValue"
+    ],
+    [SHEET_NAMES.coachingSessions]: [
+      "SessionID", "AgentEmail", "AgentName", "CoachEmail", "CoachName", 
+      "SessionDate", "WeekNumber", "OverallScore", "FollowUpComment", 
+      "SubmissionTimestamp", "FollowUpDate", "FollowUpStatus", "AgentAcknowledgementTimestamp"
+    ],
+    [SHEET_NAMES.coachingScores]: [
+      "SessionID", "Category", "Criteria", "Score", "Comment"
+    ],
+    [SHEET_NAMES.coachingTemplates]: [
+      "TemplateName", "Category", "Criteria", "Status"
+    ],
+    [SHEET_NAMES.leaveRequests]: [
+      "RequestID", "Status", "RequestedByEmail", "RequestedByName", 
+      "LeaveType", "StartDate", "EndDate", "TotalDays", "Reason", 
+      "ActionDate", "ActionBy", "SupervisorEmail", "ActionReason", 
+      "SickNoteURL", "DirectManagerSnapshot", "ProjectManagerSnapshot"
+    ],
+    [SHEET_NAMES.adherence]: [
+      "Date", "User Name", "Login", "First Break In", "First Break Out", 
+      "Lunch In", "Lunch Out", "Last Break In", "Last Break Out", "Logout", 
+      "Tardy (Seconds)", "Overtime (Seconds)", "Early Leave (Seconds)",
+      "Leave Type", "Admin Audit", "—", "1st Break Exceed", "Lunch Exceed", 
+      "Last Break Exceed", "Absent", "Admin Code"
+    ],
+    [SHEET_NAMES.otherCodes]: [
+      "Date", "User Name", "Code", "Time In", "Time Out", 
+      "Duration (Seconds)", "Admin Audit (Email)"
+    ],
+    [SHEET_NAMES.warnings]: [
+      "WarningID", "EmployeeID", "Type", "Level", "Date", "Description", "Status", "IssuedBy"
+    ],
+    [SHEET_NAMES.schedule]: [
+      "Name", "StartDate", "ShiftStartTime", "EndDate", "ShiftEndTime", "LeaveType", "agent email"
+    ],
+    [SHEET_NAMES.movementRequests]: [
+      "MovementID", "Status", "UserToMoveEmail", "UserToMoveName", 
+      "FromSupervisorEmail", "ToSupervisorEmail", 
+      "RequestTimestamp", "ActionTimestamp", "ActionByEmail", "RequestedByEmail"
+    ],
+    [SHEET_NAMES.projects]: [
+      "ProjectID", "ProjectName", "ProjectManagerEmail", "AllowedRoles"
+    ],
+    [SHEET_NAMES.projectLogs]: [
+      "LogID", "EmployeeID", "ProjectID", "Date", "HoursLogged"
+    ],
+    [SHEET_NAMES.roleRequests]: [
+      "RequestID", "UserEmail", "UserName", "CurrentRole", "RequestedRole", 
+      "Justification", "RequestTimestamp", "Status", "ActionByEmail", "ActionTimestamp"
+    ],
+    [SHEET_NAMES.announcements]: [
+      "AnnouncementID", "Content", "Status", "CreatedByEmail", "Timestamp"
+    ],
+    [SHEET_NAMES.assets]: [
+      "AssetID", "Type", "AssignedTo_EmployeeID", "DateAssigned", "Status"
+    ],
+    [SHEET_NAMES.logs]: [
+      "Timestamp", "User Name", "Email", "Action", "Time"
+    ]
+  };
+
+  // Iterate and Fix
+  for (const [sheetName, headers] of Object.entries(schema)) {
+    if (!sheetName) continue;
+    let sheet = ss.getSheetByName(sheetName);
+    
+    // 1. Create Sheet if missing
+    if (!sheet) {
+      sheet = ss.insertSheet(sheetName);
+      sheet.appendRow(headers);
+      sheet.setFrozenRows(1);
+      Logger.log(`[CREATED] Sheet: ${sheetName}`);
+    } else {
+      // 2. Update Columns if missing
+      const currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      const missingCols = [];
+      
+      headers.forEach(h => {
+        if (!currentHeaders.includes(h)) {
+          missingCols.push(h);
+        }
+      });
+      
+      if (missingCols.length > 0) {
+        sheet.getRange(1, sheet.getLastColumn() + 1, 1, missingCols.length).setValues([missingCols]);
+        Logger.log(`[UPDATED] ${sheetName}: Added cols -> ${missingCols.join(", ")}`);
+      }
+    }
+  }
+  Logger.log("Master DB Fix Complete.");
 }
